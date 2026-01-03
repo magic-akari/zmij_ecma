@@ -1,21 +1,21 @@
 [package]
-name = "zmij-fuzz"
-version = "0.0.0"
 authors = ["David Tolnay <dtolnay@gmail.com>"]
 edition = "2024"
+name    = "zmij-fuzz"
 publish = false
+version = "0.0.0"
 
-[package.metadata]
-cargo-fuzz = true
+	[package.metadata]
+	cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-zmij = { path = ".." }
+zmij          = { package = "zmij_ecma", path = ".." }
 
 [[bin]]
+doc  = false
 name = "fuzz_zmij"
 path = "fuzz_targets/fuzz_zmij.rs"
 test = false
-doc = false
 
 [workspace]
