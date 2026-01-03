@@ -1,39 +1,69 @@
 [package]
-name = "zmij"
-version = "1.0.9"
-authors = ["David Tolnay <dtolnay@gmail.com>"]
+name    = "zmij_ecma"
+version = "0.0.0"
+
+authors = [
+	"David Tolnay <dtolnay@gmail.com>",
+	"magic-akari <akari.ccino@gmail.com>",
+]
 categories = ["value-formatting", "no-std", "no-std::no-alloc"]
 description = "A double-to-string conversion algorithm based on Schubfach and yy"
-documentation = "https://docs.rs/zmij"
+documentation = "https://docs.rs/zmij_ecma"
 edition = "2021"
 exclude = ["*.png"]
 keywords = ["float"]
 license = "MIT"
-repository = "https://github.com/dtolnay/zmij"
+repository = "https://github.com/magic-akari/zmij_ecma"
 rust-version = "1.68"
+
+[features]
+default       = ["ecma"]
+ecma          = []
+original_zmij = []
 
 [dependencies]
 no-panic = { version = "0.1", optional = true }
 
 [dev-dependencies]
-num-bigint = "0.4"
-num_cpus = "1.8"
+num-bigint  = "0.4"
 num-integer = "0.1"
-opt-level = "1"
-rand = "0.9"
-ryu = "1"
+num_cpus    = "1.8"
+opt-level   = "1"
+rand        = "0.9"
+ryu         = "1"
+ryu-js      = "1.0.2"
 
 [target.'cfg(not(miri))'.dev-dependencies]
 criterion = { version = "0.8", default-features = false }
 
 [[bench]]
-name = "bench"
 harness = false
+name    = "bench"
 
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
-rustdoc-args = [
-    "--generate-link-to-definition",
-    "--generate-macro-expansion",
-    "--extern-html-root-url=core=https://doc.rust-lang.org",
-]
+[[test]]
+name              = "exhaustive"
+path              = "tests/exhaustive.rs"
+required-features = ["original_zmij"]
+
+[[test]]
+name              = "ryu_comparison"
+path              = "tests/ryu_comparison.rs"
+required-features = ["original_zmij"]
+
+[[test]]
+name              = "test"
+path              = "tests/test.rs"
+required-features = ["original_zmij"]
+
+[[test]]
+name              = "test_ecma"
+path              = "tests/test_ecma.rs"
+required-features = ["ecma"]
+
+	[package.metadata.docs.rs]
+	rustdoc-args = [
+		"--generate-link-to-definition",
+		"--generate-macro-expansion",
+		"--extern-html-root-url=core=https://doc.rust-lang.org",
+	]
+	targets = ["x86_64-unknown-linux-gnu"]

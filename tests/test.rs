@@ -1,5 +1,7 @@
 #![allow(clippy::float_cmp, clippy::unreadable_literal)]
 
+use zmij_ecma as zmij;
+
 fn dtoa(value: f64) -> String {
     zmij::Buffer::new().format(value).to_owned()
 }
