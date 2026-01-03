@@ -20,7 +20,7 @@
 //!
 //! ```
 //! fn main() {
-//!     let mut buffer = zmij::Buffer::new();
+//!     let mut buffer = zmij_ecma::Buffer::new();
 //!     let printed = buffer.format(1.234);
 //!     assert_eq!(printed, "1.234");
 //! }
@@ -65,22 +65,37 @@
 #[cfg(test)]
 mod tests;
 mod traits;
+#[cfg(feature = "ecma")]
+mod write_ecma;
+#[cfg(feature = "ecma")]
+use write_ecma::write_ecma as write;
 
 #[cfg(not(zmij_no_select_unpredictable))]
 use core::hint;
 use core::mem::{self, MaybeUninit};
 #[cfg(test)]
 use core::ops::Index;
+#[allow(unused_imports)]
 use core::ptr;
 use core::slice;
 use core::str;
 #[cfg(feature = "no-panic")]
 use no_panic::no_panic;
 
+#[cfg(not(feature = "ecma"))]
 const BUFFER_SIZE: usize = 24;
 const NAN: &str = "NaN";
+#[cfg(not(feature = "ecma"))]
 const INFINITY: &str = "inf";
+#[cfg(not(feature = "ecma"))]
 const NEG_INFINITY: &str = "-inf";
+
+#[cfg(feature = "ecma")]
+const BUFFER_SIZE: usize = 25;
+#[cfg(feature = "ecma")]
+const INFINITY: &str = "Infinity";
+#[cfg(feature = "ecma")]
+const NEG_INFINITY: &str = "-Infinity";
 
 // A decimal floating-point number sig * pow(10, exp).
 // If exp is non_finite_exp then the number is a NaN or an infinity.
@@ -746,6 +761,7 @@ where
 /// Writes the shortest correctly rounded decimal representation of `value` to
 /// `buffer`. `buffer` should point to a buffer of size `buffer_size` or larger.
 #[cfg_attr(feature = "no-panic", no_panic)]
+#[cfg(not(feature = "ecma"))]
 unsafe fn write<Float>(value: Float, mut buffer: *mut u8) -> *mut u8
 where
     Float: FloatTraits,
@@ -876,7 +892,7 @@ where
 /// ## Example
 ///
 /// ```
-/// let mut buffer = zmij::Buffer::new();
+/// let mut buffer = zmij_ecma::Buffer::new();
 /// let printed = buffer.format_finite(1.234);
 /// assert_eq!(printed, "1.234");
 /// ```
@@ -941,7 +957,7 @@ impl Buffer {
 }
 
 /// A floating point number, f32 or f64, that can be written into a
-/// [`zmij::Buffer`][Buffer].
+/// [`zmij_ecma::Buffer`][Buffer].
 ///
 /// This trait is sealed and cannot be implemented for types outside of the
 /// `zmij` crate.
