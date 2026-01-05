@@ -40,21 +40,20 @@ where
     }
 
     // Here be 🐉s.
-    let dec = to_decimal(bin_sig, bin_exp, dec_exp, regular, subnormal);
+    let mut dec = to_decimal(bin_sig, bin_exp, dec_exp, regular, subnormal);
     dec_exp = dec.exp;
-    let mut dec_sig = dec.sig;
 
     // Write significand.
     let end = if Float::NUM_BITS == 64 {
-        dec_exp += Float::MAX_DIGITS10 as i32 + i32::from(dec_sig >= 10_000_000_000_000_000) - 2;
-        unsafe { write_significand17(buffer.add(1), dec_sig as u64) }
+        dec_exp += Float::MAX_DIGITS10 as i32 + i32::from(dec.sig >= 10_000_000_000_000_000) - 2;
+        unsafe { write_significand17(buffer.add(1), dec.sig as u64) }
     } else {
-        if dec_sig < 10_000_000 {
-            dec_sig *= 10;
+        if dec.sig < 10_000_000 {
+            dec.sig *= 10;
             dec_exp -= 1;
         }
-        dec_exp += Float::MAX_DIGITS10 as i32 + i32::from(dec_sig >= 100_000_000) - 2;
-        unsafe { write_significand9(buffer.add(1), dec_sig as u32) }
+        dec_exp += Float::MAX_DIGITS10 as i32 + i32::from(dec.sig >= 100_000_000) - 2;
+        unsafe { write_significand9(buffer.add(1), dec.sig as u32) }
     };
 
     let length = unsafe { end.offset_from(buffer.add(1)) } as usize;

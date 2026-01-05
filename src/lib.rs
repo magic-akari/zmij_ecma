@@ -41,7 +41,7 @@
 //! ![performance](https://raw.githubusercontent.com/dtolnay/zmij/master/dtoa-benchmark.png)
 
 #![no_std]
-#![doc(html_root_url = "https://docs.rs/zmij/1.0.9")]
+#![doc(html_root_url = "https://docs.rs/zmij/1.0.10")]
 #![deny(unsafe_op_in_unsafe_fn)]
 #![allow(non_camel_case_types)]
 #![allow(
@@ -672,14 +672,34 @@ where
         let upper = scaled_sig_mod10 + scaled_half_ulp;
         const HALF_ULP: u64 = 1 << 63;
 
+        // value = 5.0507837461e-27
+        // next  = 5.0507837461000010e-27
+        //
+        // c = integral.fractional' = 50507837461000003.153987... (value)
+        //                            50507837461000010.328635... (next)
+        //          scaled_half_ulp =                 3.587324...
+        //
+        // fractional' = fractional / 2**64, fractional = 2840565642863009226
+        //
+        //      50507837461000000       c               upper     50507837461000010
+        //              s              l|   L             |               S
+        // ───┬────┬────┼────┬────┬────┼*-──┼────┬────┬───*┬────┬────┬────┼-*--┬───
+        //    8    9    0    1    2    3    4    5    6    7    8    9    0 |  1
+        //            └─────────────────┼─────────────────┘                next
+        //                             1ulp
+        //
+        // s - shorter underestimate, S - shorter overestimate
+        // l - longer underestimate,  L - longer overestimate
+
         // An optimization from yy by Yaoyuan Guo:
         if {
             // Exact half-ulp tie when rounding to nearest integer.
             fractional != HALF_ULP &&
-            // Exact half-ulp tie when rounding to nearest 10.
+            // Boundary case when rounding down to nearest 10.
             scaled_sig_mod10 != scaled_half_ulp &&
-            // Near-boundary case for rounding to nearest 10.
-            ten.wrapping_sub(upper) > 1
+            // Near-boundary case when rounding up to nearest 10.
+            // Case where upper != ten is insufficient: 1.342178e+08f.
+            ten.wrapping_sub(upper) > 1 // upper != ten && upper != ten - 1
         } {
             let round_up = upper >= ten;
             let shorter = (integral.into() - digit + u64::from(round_up) * 10) as i64;
@@ -733,21 +753,21 @@ where
     }
 
     let scaled_sig = umul_upper_inexact_to_odd(pow10_hi, pow10_lo, bin_sig_shifted << exp_shift);
-    let dec_sig_below = scaled_sig >> BOUND_SHIFT;
-    let dec_sig_above = dec_sig_below + UInt::from(1);
+    let longer_below = scaled_sig >> BOUND_SHIFT;
+    let longer_above = longer_below + UInt::from(1);
 
-    // Pick the closest of dec_sig_below and dec_sig_above and check if it's in
+    // Pick the closest of longer_below and longer_above and check if it's in
     // the rounding interval.
     let cmp = scaled_sig
-        .wrapping_sub((dec_sig_below + dec_sig_above) << 1)
+        .wrapping_sub((longer_below + longer_above) << 1)
         .to_signed();
     let below_closer = cmp < UInt::from(0).to_signed()
-        || (cmp == UInt::from(0).to_signed() && (dec_sig_below & UInt::from(1)) == UInt::from(0));
-    let below_in = (dec_sig_below << BOUND_SHIFT) >= lower;
+        || (cmp == UInt::from(0).to_signed() && (longer_below & UInt::from(1)) == UInt::from(0));
+    let below_in = (longer_below << BOUND_SHIFT) >= lower;
     let dec_sig = if below_closer & below_in {
-        dec_sig_below
+        longer_below
     } else {
-        dec_sig_above
+        longer_above
     };
     normalize::<UInt>(
         dec_fp {
@@ -797,21 +817,20 @@ where
     bin_sig ^= Float::IMPLICIT_BIT;
 
     // Here be 🐉s.
-    let dec = to_decimal(bin_sig, bin_exp, dec_exp, regular, subnormal);
+    let mut dec = to_decimal(bin_sig, bin_exp, dec_exp, regular, subnormal);
     dec_exp = dec.exp;
-    let mut dec_sig = dec.sig;
 
     // Write significand.
     let end = if Float::NUM_BITS == 64 {
-        dec_exp += Float::MAX_DIGITS10 as i32 + i32::from(dec_sig >= 10_000_000_000_000_000) - 2;
-        unsafe { write_significand17(buffer.add(1), dec_sig as u64) }
+        dec_exp += Float::MAX_DIGITS10 as i32 + i32::from(dec.sig >= 10_000_000_000_000_000) - 2;
+        unsafe { write_significand17(buffer.add(1), dec.sig as u64) }
     } else {
-        if dec_sig < 10_000_000 {
-            dec_sig *= 10;
+        if dec.sig < 10_000_000 {
+            dec.sig *= 10;
             dec_exp -= 1;
         }
-        dec_exp += Float::MAX_DIGITS10 as i32 + i32::from(dec_sig >= 100_000_000) - 2;
-        unsafe { write_significand9(buffer.add(1), dec_sig as u32) }
+        dec_exp += Float::MAX_DIGITS10 as i32 + i32::from(dec.sig >= 100_000_000) - 2;
+        unsafe { write_significand9(buffer.add(1), dec.sig as u32) }
     };
 
     let length = unsafe { end.offset_from(buffer.add(1)) } as usize;
