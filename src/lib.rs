@@ -70,6 +70,11 @@ mod write_ecma;
 #[cfg(feature = "ecma")]
 use write_ecma::write_ecma as write;
 
+#[cfg(all(feature = "ecma", feature = "original_zmij"))]
+mod feature_check {
+    compile_error!("Features 'ecma' and 'original_zmij' are mutually exclusive");
+}
+
 #[cfg(not(zmij_no_select_unpredictable))]
 use core::hint;
 use core::mem::{self, MaybeUninit};
@@ -82,12 +87,12 @@ use core::str;
 #[cfg(feature = "no-panic")]
 use no_panic::no_panic;
 
-#[cfg(not(feature = "ecma"))]
+#[cfg(feature = "original_zmij")]
 const BUFFER_SIZE: usize = 24;
 const NAN: &str = "NaN";
-#[cfg(not(feature = "ecma"))]
+#[cfg(feature = "original_zmij")]
 const INFINITY: &str = "inf";
-#[cfg(not(feature = "ecma"))]
+#[cfg(feature = "original_zmij")]
 const NEG_INFINITY: &str = "-inf";
 
 #[cfg(feature = "ecma")]
@@ -781,7 +786,7 @@ where
 /// Writes the shortest correctly rounded decimal representation of `value` to
 /// `buffer`. `buffer` should point to a buffer of size `buffer_size` or larger.
 #[cfg_attr(feature = "no-panic", no_panic)]
-#[cfg(not(feature = "ecma"))]
+#[cfg(feature = "original_zmij")]
 unsafe fn write<Float>(value: Float, mut buffer: *mut u8) -> *mut u8
 where
     Float: FloatTraits,
