@@ -25,13 +25,13 @@ fn utilities() {
 
 #[test]
 fn umul_upper_inexact_to_odd() {
-    let (hi, lo) = crate::POW10_SIGNIFICANDS[-292];
+    let pow10 = crate::POW10_SIGNIFICANDS.get(-292);
     assert_eq!(
-        crate::umul_upper_inexact_to_odd(hi, lo, 0x1234567890abcdefu64 << 1),
+        crate::umul_upper_inexact_to_odd(pow10.hi, pow10.lo, 0x1234567890abcdefu64 << 1),
         0x24554a3ce60a45f5,
     );
     assert_eq!(
-        crate::umul_upper_inexact_to_odd(hi, lo, 0x1234567890abce16u64 << 1),
+        crate::umul_upper_inexact_to_odd(pow10.hi, pow10.lo, 0x1234567890abce16u64 << 1),
         0x24554a3ce60a4643,
     );
 }
@@ -61,6 +61,9 @@ fn pow10() {
         };
         let hi = u64::try_from(&result >> 64).unwrap();
         let lo = u64::try_from(result & (Uint::from(2_u8).pow(64) - Uint::from(1_u8))).unwrap();
-        assert_eq!(crate::POW10_SIGNIFICANDS[DEC_EXP_MIN + i as i32], (hi, lo));
+        assert_eq!(
+            crate::POW10_SIGNIFICANDS.get(DEC_EXP_MIN + i as i32),
+            crate::uint128 { hi, lo },
+        );
     }
 }

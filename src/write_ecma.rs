@@ -16,8 +16,8 @@ where
 
     let mut bin_sig = Float::get_sig(bits); // binary significand
     let mut regular = bin_sig != Float::SigType::from(0);
-    let subnormal = raw_exp == 0;
-    if subnormal {
+    let special = raw_exp == 0;
+    if special {
         if bin_sig == Float::SigType::from(0) {
             // ECMA-262: -0 and +0 both return "0"
             return unsafe {
@@ -32,15 +32,16 @@ where
     bin_sig ^= Float::IMPLICIT_BIT;
 
     // Handle negative sign (but not for -0, which is already handled above)
-    unsafe {
-        if Float::is_negative(bits) {
+
+    if Float::is_negative(bits) {
+        unsafe {
             *buffer = b'-';
-            buffer = buffer.add(1);
         }
+        buffer = unsafe { buffer.add(1) };
     }
 
     // Here be 🐉s.
-    let mut dec = to_decimal(bin_sig, bin_exp, dec_exp, regular, subnormal);
+    let mut dec = to_decimal(bin_sig, bin_exp, dec_exp, regular, special);
     dec_exp = dec.exp;
 
     // Write significand.
@@ -92,12 +93,13 @@ where
     }
 
     // ECMA-262 steps 9-10: scientific notation
+
+    // 1234e30 -> 1.234e+33
     unsafe {
-        // 1234e30 -> 1.234e+33
         *buffer = *buffer.add(1);
         *buffer.add(1) = b'.';
-        buffer = buffer.add(length + usize::from(length > 1));
     }
+    buffer = unsafe { buffer.add(length + usize::from(length > 1)) };
 
     // Write exponent.
     let sign_ptr = buffer;
@@ -125,7 +127,9 @@ where
     let digit = (dec_exp as u32 * DIV_SIG) >> DIV_EXP; // value / 100
     unsafe {
         *buffer = b'0' + digit as u8;
-        buffer = buffer.add(usize::from(dec_exp >= 100));
+    }
+    buffer = unsafe { buffer.add(usize::from(dec_exp >= 100)) };
+    unsafe {
         buffer
             .cast::<u16>()
             .write_unaligned(*digits2((dec_exp as u32 - digit * 100) as usize));

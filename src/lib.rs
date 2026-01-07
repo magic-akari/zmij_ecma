@@ -41,7 +41,7 @@
 //! ![performance](https://raw.githubusercontent.com/dtolnay/zmij/master/dtoa-benchmark.png)
 
 #![no_std]
-#![doc(html_root_url = "https://docs.rs/zmij/1.0.10")]
+#![doc(html_root_url = "https://docs.rs/zmij/1.0.12")]
 #![deny(unsafe_op_in_unsafe_fn)]
 #![allow(non_camel_case_types)]
 #![allow(
@@ -55,10 +55,12 @@
     clippy::items_after_statements,
     clippy::must_use_candidate,
     clippy::needless_doctest_main,
+    clippy::never_loop,
     clippy::redundant_else,
     clippy::similar_names,
     clippy::too_many_lines,
     clippy::unreadable_literal,
+    clippy::while_immutable_condition,
     clippy::wildcard_imports
 )]
 
@@ -75,11 +77,11 @@ mod feature_check {
     compile_error!("Features 'ecma' and 'original_zmij' are mutually exclusive");
 }
 
+#[cfg(all(any(target_arch = "aarch64", target_arch = "x86_64"), not(miri)))]
+use core::arch::asm;
 #[cfg(not(zmij_no_select_unpredictable))]
 use core::hint;
 use core::mem::{self, MaybeUninit};
-#[cfg(test)]
-use core::ops::Index;
 #[allow(unused_imports)]
 use core::ptr;
 use core::slice;
@@ -109,6 +111,7 @@ struct dec_fp {
     exp: i32, // exponent
 }
 
+#[cfg_attr(test, derive(Debug, PartialEq))]
 struct uint128 {
     hi: u64,
     lo: u64,
@@ -142,11 +145,11 @@ where
 {
     let num_bits = mem::size_of::<UInt>() * 8;
     if num_bits == 64 {
-        let uint128 { hi, lo } = umul192_upper128(x_hi, x_lo, y.into());
-        UInt::truncate(hi | u64::from((lo >> 1) != 0))
+        let p = umul192_upper128(x_hi, x_lo, y.into());
+        UInt::truncate(p.hi | u64::from((p.lo >> 1) != 0))
     } else {
-        let result = (umul128(x_hi, y.into()) >> 32) as u64;
-        UInt::enlarge((result >> 32) as u32 | u32::from((result as u32 >> 1) != 0))
+        let p = (umul128(x_hi, y.into()) >> 32) as u64;
+        UInt::enlarge((p >> 32) as u32 | u32::from((p as u32 >> 1) != 0))
     }
 }
 
@@ -197,28 +200,61 @@ impl FloatTraits for f64 {
     }
 }
 
-struct Pow10SignificandsTable([(u64, u64); 617]);
-
-impl Pow10SignificandsTable {
-    unsafe fn get_unchecked(&self, dec_exp: i32) -> &(u64, u64) {
-        const DEC_EXP_MIN: i32 = -292;
-        unsafe { self.0.get_unchecked((dec_exp - DEC_EXP_MIN) as usize) }
-    }
+struct Pow10SignificandsTable {
+    data: [u64; Self::NUM_POW10 * 2],
 }
 
-#[cfg(test)]
-impl Index<i32> for Pow10SignificandsTable {
-    type Output = (u64, u64);
-    fn index(&self, dec_exp: i32) -> &Self::Output {
+impl Pow10SignificandsTable {
+    const NUM_POW10: usize = 617;
+    const SPLIT_TABLES: bool = true;
+
+    unsafe fn get_unchecked(&self, dec_exp: i32) -> uint128 {
         const DEC_EXP_MIN: i32 = -292;
-        &self.0[(dec_exp - DEC_EXP_MIN) as usize]
+        if !Self::SPLIT_TABLES {
+            let index = ((dec_exp - DEC_EXP_MIN) * 2) as usize;
+            return uint128 {
+                hi: unsafe { *self.data.get_unchecked(index) },
+                lo: unsafe { *self.data.get_unchecked(index + 1) },
+            };
+        }
+
+        unsafe {
+            #[cfg_attr(
+                not(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri))),
+                allow(unused_mut)
+            )]
+            let mut hi = self
+                .data
+                .as_ptr()
+                .offset(Self::NUM_POW10 as isize + DEC_EXP_MIN as isize - 1);
+            #[cfg_attr(
+                not(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri))),
+                allow(unused_mut)
+            )]
+            let mut lo = hi.add(Self::NUM_POW10);
+
+            // Force indexed loads.
+            #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
+            asm!("/*{0}{1}*/", inout(reg) hi, inout(reg) lo);
+            uint128 {
+                hi: *hi.offset(-dec_exp as isize),
+                lo: *lo.offset(-dec_exp as isize),
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn get(&self, dec_exp: i32) -> uint128 {
+        const DEC_EXP_MIN: i32 = -292;
+        assert!((DEC_EXP_MIN..DEC_EXP_MIN + Self::NUM_POW10 as i32).contains(&dec_exp));
+        unsafe { self.get_unchecked(dec_exp) }
     }
 }
 
 // 128-bit significands of powers of 10 rounded down.
 // Generated using 192-bit arithmetic method by Dougall Johnson.
 static POW10_SIGNIFICANDS: Pow10SignificandsTable = {
-    let mut data = [(0, 0); 617];
+    let mut data = [0; Pow10SignificandsTable::NUM_POW10 * 2];
 
     struct uint192 {
         w0: u64, // least significant
@@ -235,8 +271,14 @@ static POW10_SIGNIFICANDS: Pow10SignificandsTable = {
     };
     let ten = 0xa000000000000000;
     let mut i = 0;
-    while i < data.len() {
-        data[i] = (current.w2, current.w1);
+    while i < Pow10SignificandsTable::NUM_POW10 {
+        if Pow10SignificandsTable::SPLIT_TABLES {
+            data[Pow10SignificandsTable::NUM_POW10 - i - 1] = current.w2;
+            data[Pow10SignificandsTable::NUM_POW10 * 2 - i - 1] = current.w1;
+        } else {
+            data[i * 2] = current.w2;
+            data[i * 2 + 1] = current.w1;
+        }
 
         let h0: u64 = umul128_upper64(current.w0, ten);
         let h1: u64 = umul128_upper64(current.w1, ten);
@@ -263,7 +305,7 @@ static POW10_SIGNIFICANDS: Pow10SignificandsTable = {
         i += 1;
     }
 
-    Pow10SignificandsTable(data)
+    Pow10SignificandsTable { data }
 };
 
 #[cfg_attr(feature = "no-panic", no_panic)]
@@ -346,30 +388,20 @@ unsafe fn write_significand17(mut buffer: *mut u8, value: u64) -> *mut u8 {
     #[cfg(all(target_arch = "aarch64", target_feature = "neon", not(miri)))]
     {
         use core::arch::aarch64::*;
-        use core::arch::asm;
 
         // An optimized version for NEON by Dougall Johnson.
         struct ToStringConstants {
             mul_const: u64,
             hundred_million: u64,
-            multipliers32: int32x4_t,
-            multipliers16: int16x8_t,
+            multipliers32: [i32; 4],
+            multipliers16: [i16; 8],
         }
 
         static CONSTANTS: ToStringConstants = ToStringConstants {
             mul_const: 0xabcc77118461cefd,
             hundred_million: 100000000,
-            multipliers32: unsafe {
-                mem::transmute::<[i32; 4], int32x4_t>([
-                    0x68db8bb,
-                    -10000 + 0x10000,
-                    0x147b000,
-                    -100 + 0x10000,
-                ])
-            },
-            multipliers16: unsafe {
-                mem::transmute::<[i16; 8], int16x8_t>([0xce0, -10 + 0x100, 0, 0, 0, 0, 0, 0])
-            },
+            multipliers32: [0x68db8bb, -10000 + 0x10000, 0x147b000, -100 + 0x10000],
+            multipliers16: [0xce0, -10 + 0x100, 0, 0, 0, 0, 0, 0],
         };
 
         let mut c = ptr::addr_of!(CONSTANTS);
@@ -397,25 +429,19 @@ unsafe fn write_significand17(mut buffer: *mut u8, value: u64) -> *mut u8 {
         let a = (umul128(abbccddee, c.mul_const) >> 90) as u64;
         abbccddee -= a * hundred_million;
 
-        unsafe {
-            buffer = write_if_nonzero(buffer, a as u32);
+        buffer = unsafe { write_if_nonzero(buffer, a as u32) };
 
+        unsafe {
             let hundredmillions64: uint64x1_t =
                 mem::transmute::<u64, uint64x1_t>(abbccddee | (ffgghhii << 32));
             let hundredmillions32: int32x2_t = vreinterpret_s32_u64(hundredmillions64);
 
             let high_10000: int32x2_t = vreinterpret_s32_u32(vshr_n_u32(
-                vreinterpret_u32_s32(vqdmulh_n_s32(
-                    hundredmillions32,
-                    mem::transmute::<int32x4_t, [i32; 4]>(c.multipliers32)[0],
-                )),
+                vreinterpret_u32_s32(vqdmulh_n_s32(hundredmillions32, c.multipliers32[0])),
                 9,
             ));
-            let tenthousands: int32x2_t = vmla_n_s32(
-                hundredmillions32,
-                high_10000,
-                mem::transmute::<int32x4_t, [i32; 4]>(c.multipliers32)[1],
-            );
+            let tenthousands: int32x2_t =
+                vmla_n_s32(hundredmillions32, high_10000, c.multipliers32[1]);
 
             let mut extended: int32x4_t =
                 vreinterpretq_s32_u32(vshll_n_u16(vreinterpret_u16_s32(tenthousands), 0));
@@ -424,23 +450,14 @@ unsafe fn write_significand17(mut buffer: *mut u8, value: u64) -> *mut u8 {
             // MUL.
             asm!("/*{:v}*/", inout(vreg) extended);
 
-            let high_100: int32x4_t = vqdmulhq_n_s32(
-                extended,
-                mem::transmute::<int32x4_t, [i32; 4]>(c.multipliers32)[2],
-            );
-            let hundreds: int16x8_t = vreinterpretq_s16_s32(vmlaq_n_s32(
-                extended,
-                high_100,
-                mem::transmute::<int32x4_t, [i32; 4]>(c.multipliers32)[3],
-            ));
-            let high_10: int16x8_t = vqdmulhq_n_s16(
-                hundreds,
-                mem::transmute::<int16x8_t, [i16; 8]>(c.multipliers16)[0],
-            );
+            let high_100: int32x4_t = vqdmulhq_n_s32(extended, c.multipliers32[2]);
+            let hundreds: int16x8_t =
+                vreinterpretq_s16_s32(vmlaq_n_s32(extended, high_100, c.multipliers32[3]));
+            let high_10: int16x8_t = vqdmulhq_n_s16(hundreds, c.multipliers16[0]);
             let digits: uint8x16_t = vrev64q_u8(vreinterpretq_u8_s16(vmlaq_n_s16(
                 hundreds,
                 high_10,
-                mem::transmute::<int16x8_t, [i16; 8]>(c.multipliers16)[1],
+                c.multipliers16[1],
             )));
             let ascii: uint16x8_t = vaddq_u16(
                 vreinterpretq_u16_u8(digits),
@@ -465,8 +482,8 @@ unsafe fn write_significand17(mut buffer: *mut u8, value: u64) -> *mut u8 {
         let a = abbccddee / 100_000_000;
         let bbccddee = abbccddee % 100_000_000;
 
+        buffer = unsafe { write_if_nonzero(buffer, a) };
         unsafe {
-            buffer = write_if_nonzero(buffer, a);
             // This BCD sequence is by Xiang JunBo. It works the same as the one
             // in to_bc8 but the masking can be avoided by using vector entries
             // of the right size, and in the last step a shift operation is
@@ -523,9 +540,7 @@ unsafe fn write_significand17(mut buffer: *mut u8, value: u64) -> *mut u8 {
         // digit a can be zero.
         let abbccddee = (value / 100_000_000) as u32;
         let ffgghhii = (value % 100_000_000) as u32;
-        unsafe {
-            buffer = write_if_nonzero(buffer, abbccddee / 100_000_000);
-        }
+        buffer = unsafe { write_if_nonzero(buffer, abbccddee / 100_000_000) };
         let bcd = to_bcd8(u64::from(abbccddee % 100_000_000));
         unsafe {
             write8(buffer, bcd | ZEROS);
@@ -545,9 +560,7 @@ unsafe fn write_significand17(mut buffer: *mut u8, value: u64) -> *mut u8 {
 // and removes trailing zeros.
 #[cfg_attr(feature = "no-panic", no_panic)]
 unsafe fn write_significand9(mut buffer: *mut u8, value: u32) -> *mut u8 {
-    unsafe {
-        buffer = write_if_nonzero(buffer, value / 100_000_000);
-    }
+    buffer = unsafe { write_if_nonzero(buffer, value / 100_000_000) };
     let bcd = to_bcd8(u64::from(value % 100_000_000));
     unsafe {
         write8(buffer, bcd | ZEROS);
@@ -630,28 +643,35 @@ where
     UInt: traits::UInt,
 {
     let num_bits = mem::size_of::<UInt>() as i32 * 8;
-    if regular && !subnormal {
+    // An optimization from yy by Yaoyuan Guo:
+    while regular && !subnormal {
         let exp_shift = compute_exp_shift(bin_exp, dec_exp);
-        let (pow10_hi, pow10_lo) = *unsafe { POW10_SIGNIFICANDS.get_unchecked(-dec_exp) };
+        let pow10 = unsafe { POW10_SIGNIFICANDS.get_unchecked(-dec_exp) };
 
         let integral; // integral part of bin_sig * pow10
         let fractional; // fractional part of bin_sig * pow10
         if num_bits == 64 {
-            let result = umul192_upper128(pow10_hi, pow10_lo, (bin_sig << exp_shift).into());
-            integral = UInt::truncate(result.hi);
-            fractional = result.lo;
+            let p = umul192_upper128(pow10.hi, pow10.lo, (bin_sig << exp_shift).into());
+            integral = UInt::truncate(p.hi);
+            fractional = p.lo;
         } else {
-            let result = umul128(pow10_hi, (bin_sig << exp_shift).into());
-            integral = UInt::truncate((result >> 64) as u64);
-            fractional = result as u64;
+            let p = umul128(pow10.hi, (bin_sig << exp_shift).into());
+            integral = UInt::truncate((p >> 64) as u64);
+            fractional = p as u64;
         }
+        const HALF_ULP: u64 = 1 << 63;
+
+        // Exact half-ulp tie when rounding to nearest integer.
+        if fractional == HALF_ULP {
+            break;
+        }
+
         #[cfg(all(any(target_arch = "aarch64", target_arch = "x86_64"), not(miri)))]
         let digit = {
-            use core::arch::asm;
             // An optimization of integral % 10 by Dougall Johnson. Relies on
             // range calculation: (max_bin_sig << max_exp_shift) * max_u128.
-            let div10 = ((u128::from(integral.into()) * ((1 << 64) / 10 + 1)) >> 64) as u64;
-            let mut digit = integral.into() - div10 * 10;
+            let quo10 = ((u128::from(integral.into()) * ((1 << 64) / 10 + 1)) >> 64) as u64;
+            let mut digit = integral.into() - quo10 * 10;
             unsafe {
                 asm!("/*{0}*/", inout(reg) digit); // or it narrows to 32-bit and doesn't use madd/msub
             }
@@ -673,9 +693,8 @@ where
         // dec_exp is chosen so that 10**dec_exp <= 2**bin_exp < 10**(dec_exp + 1).
         // Since 1ulp == 2**bin_exp it will be in the range [1, 10) after scaling
         // by 10**dec_exp. Add 1 to combine the shift with division by two.
-        let scaled_half_ulp = pow10_hi >> (num_integral_bits - exp_shift + 1);
+        let scaled_half_ulp = pow10.hi >> (num_integral_bits - exp_shift + 1);
         let upper = scaled_sig_mod10 + scaled_half_ulp;
-        const HALF_ULP: u64 = 1 << 63;
 
         // value = 5.0507837461e-27
         // next  = 5.0507837461000010e-27
@@ -696,10 +715,7 @@ where
         // s - shorter underestimate, S - shorter overestimate
         // l - longer underestimate,  L - longer overestimate
 
-        // An optimization from yy by Yaoyuan Guo:
         if {
-            // Exact half-ulp tie when rounding to nearest integer.
-            fractional != HALF_ULP &&
             // Boundary case when rounding down to nearest 10.
             scaled_sig_mod10 != scaled_half_ulp &&
             // Near-boundary case when rounding up to nearest 10.
@@ -718,18 +734,19 @@ where
                 exp: dec_exp,
             };
         }
+        break;
     }
 
     dec_exp = compute_dec_exp(bin_exp, regular);
     let exp_shift = compute_exp_shift(bin_exp, dec_exp);
-    let (mut pow10_hi, mut pow10_lo) = *unsafe { POW10_SIGNIFICANDS.get_unchecked(-dec_exp) };
+    let mut pow10 = unsafe { POW10_SIGNIFICANDS.get_unchecked(-dec_exp) };
 
     // Fallback to Schubfach to guarantee correctness in boundary cases. This
     // requires switching to strict overestimates of powers of 10.
     if num_bits == 64 {
-        pow10_lo += 1;
+        pow10.lo += 1;
     } else {
-        pow10_hi += 1;
+        pow10.hi += 1;
     }
 
     // Shift the significand so that boundaries are integer.
@@ -740,9 +757,9 @@ where
     // by multiplying them by the power of 10 and applying modified rounding.
     let lsb = bin_sig & UInt::from(1);
     let lower = (bin_sig_shifted - (UInt::from(regular) + UInt::from(1))) << exp_shift;
-    let lower = umul_upper_inexact_to_odd(pow10_hi, pow10_lo, lower) + lsb;
+    let lower = umul_upper_inexact_to_odd(pow10.hi, pow10.lo, lower) + lsb;
     let upper = (bin_sig_shifted + UInt::from(2)) << exp_shift;
-    let upper = umul_upper_inexact_to_odd(pow10_hi, pow10_lo, upper) - lsb;
+    let upper = umul_upper_inexact_to_odd(pow10.hi, pow10.lo, upper) - lsb;
 
     // The idea of using a single shorter candidate is by Cassio Neri.
     // It is less or equal to the upper bound by construction.
@@ -757,7 +774,7 @@ where
         );
     }
 
-    let scaled_sig = umul_upper_inexact_to_odd(pow10_hi, pow10_lo, bin_sig_shifted << exp_shift);
+    let scaled_sig = umul_upper_inexact_to_odd(pow10.hi, pow10.lo, bin_sig_shifted << exp_shift);
     let longer_below = scaled_sig >> BOUND_SHIFT;
     let longer_above = longer_below + UInt::from(1);
 
@@ -799,13 +816,13 @@ where
 
     unsafe {
         *buffer = b'-';
-        buffer = buffer.add(usize::from(Float::is_negative(bits)));
     }
+    buffer = unsafe { buffer.add(usize::from(Float::is_negative(bits))) };
 
     let mut bin_sig = Float::get_sig(bits); // binary significand
     let mut regular = bin_sig != Float::SigType::from(0);
-    let subnormal = raw_exp == 0;
-    if subnormal {
+    let special = raw_exp == 0;
+    if special {
         if bin_sig == Float::SigType::from(0) {
             return unsafe {
                 *buffer = b'0';
@@ -822,7 +839,7 @@ where
     bin_sig ^= Float::IMPLICIT_BIT;
 
     // Here be 🐉s.
-    let mut dec = to_decimal(bin_sig, bin_exp, dec_exp, regular, subnormal);
+    let mut dec = to_decimal(bin_sig, bin_exp, dec_exp, regular, special);
     dec_exp = dec.exp;
 
     // Write significand.
@@ -873,8 +890,8 @@ where
         // 1234e30 -> 1.234e33
         *buffer = *buffer.add(1);
         *buffer.add(1) = b'.';
-        buffer = buffer.add(length + usize::from(length > 1));
     }
+    buffer = unsafe { buffer.add(length + usize::from(length > 1)) };
 
     // Write exponent.
     let sign_ptr = buffer;
@@ -902,7 +919,9 @@ where
     let digit = (dec_exp as u32 * DIV_SIG) >> DIV_EXP; // value / 100
     unsafe {
         *buffer = b'0' + digit as u8;
-        buffer = buffer.add(usize::from(dec_exp >= 100));
+    }
+    buffer = unsafe { buffer.add(usize::from(dec_exp >= 100)) };
+    unsafe {
         buffer
             .cast::<u16>()
             .write_unaligned(*digits2((dec_exp as u32 - digit * 100) as usize));
