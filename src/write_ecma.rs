@@ -9,14 +9,12 @@ where
     Float: FloatTraits,
 {
     let bits = value.to_bits();
-    let raw_exp = Float::get_exp(bits); // binary exponent
-    let mut bin_exp = raw_exp - Float::NUM_SIG_BITS - Float::EXP_BIAS;
-    // Compute the decimal exponent early to overlap its latency with other work.
-    let mut dec_exp = compute_dec_exp(bin_exp, true);
-
+    // It is beneficial to extract exponent and significand early.
+    let bin_exp = Float::get_exp(bits); // binary exponent
     let mut bin_sig = Float::get_sig(bits); // binary significand
-    let mut regular = bin_sig != Float::SigType::from(0);
-    let special = raw_exp == 0;
+
+    let special = bin_exp == 0;
+    let regular = (bin_sig != Float::SigType::from(0)) | special; // | special slightly improves perf.
     if special {
         if bin_sig == Float::SigType::from(0) {
             // ECMA-262: -0 and +0 both return "0"
@@ -25,9 +23,7 @@ where
                 buffer.add(1)
             };
         }
-        bin_exp = 1 - Float::NUM_SIG_BITS - Float::EXP_BIAS;
         bin_sig |= Float::IMPLICIT_BIT;
-        regular = true;
     }
     bin_sig ^= Float::IMPLICIT_BIT;
 
@@ -41,20 +37,22 @@ where
     }
 
     // Here be 🐉s.
-    let mut dec = to_decimal(bin_sig, bin_exp, dec_exp, regular, special);
-    dec_exp = dec.exp;
+    let mut dec = to_decimal::<Float, Float::SigType>(bin_sig, bin_exp, regular, special);
+    let mut dec_exp = dec.exp;
 
     // Write significand.
     let end = if Float::NUM_BITS == 64 {
-        dec_exp += Float::MAX_DIGITS10 as i32 + i32::from(dec.sig >= 10_000_000_000_000_000) - 2;
-        unsafe { write_significand17(buffer.add(1), dec.sig as u64) }
+        let has17digits = dec.sig >= 10_000_000_000_000_000;
+        dec_exp += Float::MAX_DIGITS10 as i32 - 2 + i32::from(has17digits);
+        unsafe { write_significand17(buffer.add(1), dec.sig as u64, has17digits) }
     } else {
         if dec.sig < 10_000_000 {
             dec.sig *= 10;
             dec_exp -= 1;
         }
-        dec_exp += Float::MAX_DIGITS10 as i32 + i32::from(dec.sig >= 100_000_000) - 2;
-        unsafe { write_significand9(buffer.add(1), dec.sig as u32) }
+        let has9digits = dec.sig >= 100_000_000;
+        dec_exp += Float::MAX_DIGITS10 as i32 - 2 + i32::from(has9digits);
+        unsafe { write_significand9(buffer.add(1), dec.sig as u32, has9digits) }
     };
 
     let length = unsafe { end.offset_from(buffer.add(1)) } as usize;
@@ -109,8 +107,7 @@ where
         (u16::from(b'-') << 8) | u16::from(b'e')
     };
     buffer = unsafe { buffer.add(1) };
-    let mask = i32::from(dec_exp >= 0) - 1;
-    dec_exp = (dec_exp + mask) ^ mask; // absolute value
+    dec_exp = if dec_exp >= 0 { dec_exp } else { -dec_exp };
     buffer = unsafe { buffer.add(usize::from(dec_exp >= 10)) };
     if Float::MIN_10_EXP >= -99 && Float::MAX_10_EXP <= 99 {
         unsafe {
@@ -121,10 +118,14 @@ where
             return buffer.add(2);
         }
     }
-    // 19 is faster or equal to 12 even for 3 digits.
-    const DIV_EXP: u32 = 19;
-    const DIV_SIG: u32 = (1 << DIV_EXP) / 100 + 1;
-    let digit = (dec_exp as u32 * DIV_SIG) >> DIV_EXP; // value / 100
+
+    let digit = if cfg!(all(target_vendor = "apple", target_arch = "aarch64")) {
+        // Use mulhi to divide by 100.
+        ((dec_exp as u128 * 0x290000000000000) >> 64) as u32
+    } else {
+        // div100_exp=19 is faster or equal to 12 even for 3 digits.
+        (dec_exp as u32 * DIV100_SIG) >> DIV100_EXP
+    };
     unsafe {
         *buffer = b'0' + digit as u8;
     }
