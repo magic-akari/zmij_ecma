@@ -13,9 +13,9 @@ where
     let bin_exp = Float::get_exp(bits); // binary exponent
     let mut bin_sig = Float::get_sig(bits); // binary significand
 
-    let special = bin_exp == 0;
-    let regular = (bin_sig != Float::SigType::from(0)) | special; // | special slightly improves perf.
-    if special {
+    let regular = bin_sig != Float::SigType::from(0);
+    let subnormal = bin_exp == 0;
+    if bin_exp == 0 {
         if bin_sig == Float::SigType::from(0) {
             // ECMA-262: -0 and +0 both return "0"
             return unsafe {
@@ -37,7 +37,7 @@ where
     }
 
     // Here be 🐉s.
-    let mut dec = to_decimal::<Float, Float::SigType>(bin_sig, bin_exp, regular, special);
+    let mut dec = to_decimal::<Float, Float::SigType>(bin_sig, bin_exp, regular, subnormal);
     let mut dec_exp = dec.exp;
 
     // Write significand.
@@ -119,11 +119,10 @@ where
         }
     }
 
-    let digit = if cfg!(all(target_vendor = "apple", target_arch = "aarch64")) {
-        // Use mulhi to divide by 100.
-        ((dec_exp as u128 * 0x290000000000000) >> 64) as u32
+    // digit = dec_exp / 100
+    let digit = if USE_UMUL128_HI64 {
+        umul128_hi64(dec_exp as u64, 0x290000000000000) as u32
     } else {
-        // div100_exp=19 is faster or equal to 12 even for 3 digits.
         (dec_exp as u32 * DIV100_SIG) >> DIV100_EXP
     };
     unsafe {
