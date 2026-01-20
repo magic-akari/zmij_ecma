@@ -11,40 +11,49 @@ where
     let bits = value.to_bits();
     // It is beneficial to extract exponent and significand early.
     let bin_exp = Float::get_exp(bits); // binary exponent
-    let mut bin_sig = Float::get_sig(bits); // binary significand
-
-    let regular = bin_sig != Float::SigType::from(0);
-    let subnormal = bin_exp == 0;
-    if bin_exp == 0 {
-        if bin_sig == Float::SigType::from(0) {
-            // ECMA-262: -0 and +0 both return "0"
-            return unsafe {
-                *buffer = b'0';
-                buffer.add(1)
-            };
-        }
-        bin_sig |= Float::IMPLICIT_BIT;
+    let bin_sig = Float::get_sig(bits); // binary significand
+    if bin_exp == 0 && bin_sig == Float::SigType::from(0) {
+        // ECMA-262: -0 and +0 both return "0"
+        return unsafe {
+            *buffer = b'0';
+            buffer.add(1)
+        };
     }
-    bin_sig ^= Float::IMPLICIT_BIT;
 
     // Handle negative sign (but not for -0, which is already handled above)
-
-    if Float::is_negative(bits) {
-        unsafe {
-            *buffer = b'-';
-        }
-        buffer = unsafe { buffer.add(1) };
+    unsafe {
+        *buffer = b'-';
     }
+    buffer = unsafe { buffer.add(usize::from(Float::is_negative(bits))) };
 
-    // Here be 🐉s.
-    let mut dec = to_decimal::<Float, Float::SigType>(bin_sig, bin_exp, regular, subnormal);
+    let mut dec = if bin_exp == 0 {
+        to_decimal_schubfach::<true, Float::SigType>(
+            bin_sig,
+            i64::from(1 - Float::EXP_OFFSET),
+            true,
+        )
+    } else {
+        to_decimal_normal::<Float, Float::SigType>(
+            bin_sig | Float::IMPLICIT_BIT,
+            bin_exp,
+            bin_sig != Float::SigType::from(0),
+        )
+    };
     let mut dec_exp = dec.exp;
 
     // Write significand.
     let end = if Float::NUM_BITS == 64 {
         let has17digits = dec.sig >= 10_000_000_000_000_000;
         dec_exp += Float::MAX_DIGITS10 as i32 - 2 + i32::from(has17digits);
-        unsafe { write_significand17(buffer.add(1), dec.sig as u64, has17digits) }
+        unsafe {
+            write_significand17(
+                buffer,
+                dec.sig as u64,
+                has17digits,
+                #[cfg(all(target_arch = "x86_64", target_feature = "sse2", not(miri)))]
+                dec.sig_div10,
+            )
+        }
     } else {
         if dec.sig < 10_000_000 {
             dec.sig *= 10;

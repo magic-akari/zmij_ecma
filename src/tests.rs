@@ -5,7 +5,7 @@ use num_bigint::BigUint as Uint;
 const _: () = {
     let static_data =
         mem::size_of_val(&crate::POW10_SIGNIFICANDS) + mem::size_of_val(&crate::DIGITS2);
-    assert!(static_data == 10072); // 9.8K
+    assert!(static_data == 10120); // 9.9K
 };
 
 #[cfg(target_endian = "little")]
