@@ -26,42 +26,50 @@ where
     }
     buffer = unsafe { buffer.add(usize::from(Float::is_negative(bits))) };
 
-    let mut dec = if bin_exp == 0 {
-        to_decimal_schubfach::<true, Float::SigType>(
-            bin_sig,
-            i64::from(1 - Float::EXP_OFFSET),
-            true,
-        )
+    let mut dec;
+    let threshold = if Float::NUM_BITS == 64 {
+        10_000_000_000_000_000
     } else {
-        to_decimal_normal::<Float, Float::SigType>(
+        100_000_000
+    };
+    if bin_exp == 0 {
+        dec = to_decimal_schubfach(bin_sig, i64::from(1 - Float::EXP_OFFSET), true);
+        while dec.sig < threshold {
+            dec.sig *= 10;
+            dec.exp -= 1;
+        }
+        #[cfg(all(target_arch = "x86_64", target_feature = "sse2", not(miri)))]
+        {
+            dec.sig_div10 = dec.sig / 10;
+        }
+    } else {
+        dec = to_decimal_fast::<Float, Float::SigType>(
             bin_sig | Float::IMPLICIT_BIT,
             bin_exp,
             bin_sig != Float::SigType::from(0),
-        )
-    };
+        );
+    }
     let mut dec_exp = dec.exp;
+    let extra_digit = dec.sig >= threshold;
+    dec_exp += Float::MAX_DIGITS10 as i32 - 2 + i32::from(extra_digit);
+    if Float::NUM_BITS == 32 && dec.sig < 10_000_000 {
+        dec.sig *= 10;
+        dec.exp -= 1;
+    }
 
     // Write significand.
     let end = if Float::NUM_BITS == 64 {
-        let has17digits = dec.sig >= 10_000_000_000_000_000;
-        dec_exp += Float::MAX_DIGITS10 as i32 - 2 + i32::from(has17digits);
         unsafe {
             write_significand17(
-                buffer,
+                buffer.add(1),
                 dec.sig as u64,
-                has17digits,
+                extra_digit,
                 #[cfg(all(target_arch = "x86_64", target_feature = "sse2", not(miri)))]
                 dec.sig_div10,
             )
         }
     } else {
-        if dec.sig < 10_000_000 {
-            dec.sig *= 10;
-            dec_exp -= 1;
-        }
-        let has9digits = dec.sig >= 100_000_000;
-        dec_exp += Float::MAX_DIGITS10 as i32 - 2 + i32::from(has9digits);
-        unsafe { write_significand9(buffer.add(1), dec.sig as u32, has9digits) }
+        unsafe { write_significand9(buffer.add(1), dec.sig as u32, extra_digit) }
     };
 
     let length = unsafe { end.offset_from(buffer.add(1)) } as usize;
@@ -118,7 +126,7 @@ where
     buffer = unsafe { buffer.add(1) };
     dec_exp = if dec_exp >= 0 { dec_exp } else { -dec_exp };
     buffer = unsafe { buffer.add(usize::from(dec_exp >= 10)) };
-    if Float::MIN_10_EXP >= -99 && Float::MAX_10_EXP <= 99 {
+    if Float::MIN_10_EXP > -100 && Float::MAX_10_EXP < 100 {
         unsafe {
             buffer
                 .cast::<u16>()
