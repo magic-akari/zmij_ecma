@@ -38,10 +38,6 @@ where
             dec.sig *= 10;
             dec.exp -= 1;
         }
-        #[cfg(all(target_arch = "x86_64", target_feature = "sse2", not(miri)))]
-        {
-            dec.sig_div10 = dec.sig / 10;
-        }
     } else {
         dec = to_decimal_fast::<Float, Float::SigType>(
             bin_sig | Float::IMPLICIT_BIT,
@@ -58,19 +54,7 @@ where
     }
 
     // Write significand.
-    let end = if Float::NUM_BITS == 64 {
-        unsafe {
-            write_significand17(
-                buffer.add(1),
-                dec.sig as u64,
-                extra_digit,
-                #[cfg(all(target_arch = "x86_64", target_feature = "sse2", not(miri)))]
-                dec.sig_div10,
-            )
-        }
-    } else {
-        unsafe { write_significand9(buffer.add(1), dec.sig as u32, extra_digit) }
-    };
+    let end = unsafe { write_significand::<Float>(buffer.add(1), dec.sig as u64, extra_digit) };
 
     let length = unsafe { end.offset_from(buffer.add(1)) } as usize;
 
