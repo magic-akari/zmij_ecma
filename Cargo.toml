@@ -14,7 +14,7 @@ exclude = ["*.png"]
 keywords = ["float"]
 license = "MIT"
 repository = "https://github.com/magic-akari/zmij_ecma"
-rust-version = "1.68"
+rust-version = "1.71"
 
 [features]
 default       = ["ecma"]
@@ -29,7 +29,7 @@ num-bigint  = "0.4"
 num-integer = "0.1"
 num_cpus    = "1.8"
 opt-level   = "1"
-rand        = "0.9"
+rand        = "0.10"
 ryu         = "1"
 ryu-js      = "1.0.2"
 

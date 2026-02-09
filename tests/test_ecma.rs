@@ -180,8 +180,8 @@ mod number_to_string_test {
 }
 
 mod ryu_comparison_test {
-    use rand::rngs::SmallRng;
-    use rand::{RngCore as _, SeedableRng as _};
+    use rand::rngs::{SmallRng, SysRng};
+    use rand::{Rng as _, SeedableRng as _};
     use zmij_ecma as zmij;
 
     const N: usize = if cfg!(miri) {
@@ -196,7 +196,7 @@ mod ryu_comparison_test {
     fn ryu_comparison() {
         let mut ryu_buffer = ryu_js::Buffer::new();
         let mut zmij_buffer = zmij::Buffer::new();
-        let mut rng = SmallRng::from_os_rng();
+        let mut rng = SmallRng::try_from_rng(&mut SysRng).unwrap();
         let mut fail = 0;
 
         for _ in 0..N {

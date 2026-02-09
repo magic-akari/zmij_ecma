@@ -24,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rust: [nightly, beta, stable, 1.86.0, 1.68.0]
+        rust: [nightly, beta, stable, 1.86.0, 1.71.0]
         arch: [x86_64, aarch64]
         os: [ubuntu]
         include:
@@ -43,9 +43,9 @@ jobs:
       - run: cargo build --tests --features no-panic --release
         if: matrix.rust == 'nightly'
       - run: cargo test
-        if: matrix.rust != '1.68.0'
+        if: matrix.rust != '1.71.0'
       - run: cargo test --release
-        if: matrix.rust != '1.68.0'
+        if: matrix.rust != '1.71.0'
       - run: cargo check
         env:
           RUSTFLAGS: ${{env.RUSTFLAGS}} -Ctarget-cpu=native
@@ -54,11 +54,11 @@ jobs:
         env:
           RUSTFLAGS: ${{env.RUSTFLAGS}} -Ctarget-cpu=native
       - run: cargo test
-        if: matrix.rust != '1.68.0'
+        if: matrix.rust != '1.71.0'
         env:
           RUSTFLAGS: ${{env.RUSTFLAGS}} -Ctarget-cpu=native
       - run: cargo test --release
-        if: matrix.rust != '1.68.0'
+        if: matrix.rust != '1.71.0'
         env:
           RUSTFLAGS: ${{env.RUSTFLAGS}} -Ctarget-cpu=native
       - uses: actions/upload-artifact@v6

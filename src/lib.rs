@@ -41,7 +41,7 @@
 //! ![performance](https://raw.githubusercontent.com/dtolnay/zmij/master/dtoa-benchmark.png)
 
 #![no_std]
-#![doc(html_root_url = "https://docs.rs/zmij/1.0.19")]
+#![doc(html_root_url = "https://docs.rs/zmij/1.0.20")]
 #![deny(unsafe_op_in_unsafe_fn)]
 #![allow(non_camel_case_types, non_snake_case)]
 #![allow(
@@ -54,6 +54,7 @@
     clippy::incompatible_msrv,
     clippy::items_after_statements,
     clippy::many_single_char_names,
+    clippy::modulo_one,
     clippy::must_use_candidate,
     clippy::needless_doctest_main,
     clippy::never_loop,
@@ -111,6 +112,13 @@ const INFINITY: &str = "Infinity";
 #[cfg(feature = "ecma")]
 const NEG_INFINITY: &str = "-Infinity";
 
+// Returns true_value if lhs < rhs, else false_value, without branching.
+#[inline]
+fn select_if_less(lhs: u64, rhs: u64, true_value: i64, false_value: i64) -> i64 {
+    hint::select_unpredictable(lhs < rhs, true_value, false_value)
+}
+
+#[derive(Copy, Clone)]
 #[cfg_attr(test, derive(Debug, PartialEq))]
 struct uint128 {
     hi: u64,
@@ -206,15 +214,95 @@ impl FloatTraits for f64 {
 
 #[repr(C, align(64))]
 struct Pow10SignificandsTable {
-    data: [u64; Self::NUM_POW10 * 2],
+    data: [u64; if Self::COMPRESS {
+        0
+    } else {
+        Self::NUM_POW10 * 2
+    }],
 }
 
 impl Pow10SignificandsTable {
-    const SPLIT_TABLES: bool = cfg!(target_arch = "aarch64");
+    const COMPRESS: bool = false;
+    const SPLIT_TABLES: bool = !Self::COMPRESS && cfg!(target_arch = "aarch64");
     const NUM_POW10: usize = 617;
 
     unsafe fn get_unchecked(&self, dec_exp: i32) -> uint128 {
         const DEC_EXP_MIN: i32 = -292;
+        if Self::COMPRESS {
+            let i = dec_exp - DEC_EXP_MIN;
+            // 672 bytes of data
+            #[rustfmt::skip]
+            static POW10S: [u64; 28] = [
+                0x8000000000000000, 0xa000000000000000, 0xc800000000000000,
+                0xfa00000000000000, 0x9c40000000000000, 0xc350000000000000,
+                0xf424000000000000, 0x9896800000000000, 0xbebc200000000000,
+                0xee6b280000000000, 0x9502f90000000000, 0xba43b74000000000,
+                0xe8d4a51000000000, 0x9184e72a00000000, 0xb5e620f480000000,
+                0xe35fa931a0000000, 0x8e1bc9bf04000000, 0xb1a2bc2ec5000000,
+                0xde0b6b3a76400000, 0x8ac7230489e80000, 0xad78ebc5ac620000,
+                0xd8d726b7177a8000, 0x878678326eac9000, 0xa968163f0a57b400,
+                0xd3c21bcecceda100, 0x84595161401484a0, 0xa56fa5b99019a5c8,
+                0xcecb8f27f4200f3a,
+            ];
+
+            #[rustfmt::skip]
+            static HIGH_PARTS: [uint128; 23] = [
+                uint128 { hi: 0xaf8e5410288e1b6f, lo: 0x07ecf0ae5ee44dda },
+                uint128 { hi: 0xb1442798f49ffb4a, lo: 0x99cd11cfdf41779d },
+                uint128 { hi: 0xb2fe3f0b8599ef07, lo: 0x861fa7e6dcb4aa15 },
+                uint128 { hi: 0xb4bca50b065abe63, lo: 0x0fed077a756b53aa },
+                uint128 { hi: 0xb67f6455292cbf08, lo: 0x1a3bc84c17b1d543 },
+                uint128 { hi: 0xb84687c269ef3bfb, lo: 0x3d5d514f40eea742 },
+                uint128 { hi: 0xba121a4650e4ddeb, lo: 0x92f34d62616ce413 },
+                uint128 { hi: 0xbbe226efb628afea, lo: 0x890489f70a55368c },
+                uint128 { hi: 0xbdb6b8e905cb600f, lo: 0x5400e987bbc1c921 },
+                uint128 { hi: 0xbf8fdb78849a5f96, lo: 0xde98520472bdd034 },
+                uint128 { hi: 0xc16d9a0095928a27, lo: 0x75b7053c0f178294 },
+                uint128 { hi: 0xc350000000000000, lo: 0x0000000000000000 },
+                uint128 { hi: 0xc5371912364ce305, lo: 0x6c28000000000000 },
+                uint128 { hi: 0xc722f0ef9d80aad6, lo: 0x424d3ad2b7b97ef6 },
+                uint128 { hi: 0xc913936dd571c84c, lo: 0x03bc3a19cd1e38ea },
+                uint128 { hi: 0xcb090c8001ab551c, lo: 0x5cadf5bfd3072cc6 },
+                uint128 { hi: 0xcd036837130890a1, lo: 0x36dba887c37a8c10 },
+                uint128 { hi: 0xcf02b2c21207ef2e, lo: 0x94f967e45e03f4bc },
+                uint128 { hi: 0xd106f86e69d785c7, lo: 0xe13336d701beba52 },
+                uint128 { hi: 0xd31045a8341ca07c, lo: 0x1ede48111209a051 },
+                uint128 { hi: 0xd51ea6fa85785631, lo: 0x552a74227f3ea566 },
+                uint128 { hi: 0xd732290fbacaf133, lo: 0xa97c177947ad4096 },
+                uint128 { hi: 0xd94ad8b1c7380874, lo: 0x18375281ae7822bc },
+            ];
+
+            #[rustfmt::skip]
+            static FIXUPS: [u32; 20] = [
+                0x05271b1f, 0x00000c20, 0x00003200, 0x12100020,
+                0x00000000, 0x06000000, 0xc16409c0, 0xaf26700f,
+                0xeb987b07, 0x0000000d, 0x00000000, 0x66fbfffe,
+                0xb74100ec, 0xa0669fe8, 0xedb21280, 0x00000686,
+                0x0a021200, 0x29b89c20, 0x08bc0eda, 0x00000000,
+            ];
+
+            let m = unsafe { *POW10S.get_unchecked(((i + 11) % 28) as usize) };
+            let h = unsafe { *HIGH_PARTS.get_unchecked(((i + 11) / 28) as usize) };
+
+            let h1 = umul128_hi64(h.lo, m);
+
+            let c0 = h.lo.wrapping_mul(m);
+            let c1 = h1.wrapping_add(h.hi.wrapping_mul(m));
+            let c2 = u64::from(c1 < h1) + umul128_hi64(h.hi, m);
+
+            let mut result = if (c2 >> 63) != 0 {
+                uint128 { hi: c2, lo: c1 }
+            } else {
+                uint128 {
+                    hi: (c2 << 1) | (c1 >> 63),
+                    lo: (c1 << 1) | (c0 >> 63),
+                }
+            };
+
+            result.lo -=
+                u64::from((unsafe { *FIXUPS.get_unchecked((i >> 5) as usize) } >> (i & 31)) & 1);
+            return result;
+        }
         if !Self::SPLIT_TABLES {
             let index = ((dec_exp - DEC_EXP_MIN) * 2) as usize;
             return uint128 {
@@ -257,9 +345,13 @@ impl Pow10SignificandsTable {
 }
 
 // 128-bit significands of powers of 10 rounded down.
-// Generated using 192-bit arithmetic method by Dougall Johnson.
+// Generation with 192-bit arithmetic and compression by Dougall Johnson.
 static POW10_SIGNIFICANDS: Pow10SignificandsTable = {
-    let mut data = [0; Pow10SignificandsTable::NUM_POW10 * 2];
+    let mut data = [0; if Pow10SignificandsTable::COMPRESS {
+        0
+    } else {
+        Pow10SignificandsTable::NUM_POW10 * 2
+    }];
 
     struct uint192 {
         w0: u64, // least significant
@@ -276,7 +368,7 @@ static POW10_SIGNIFICANDS: Pow10SignificandsTable = {
     };
     let ten = 0xa000000000000000;
     let mut i = 0;
-    while i < Pow10SignificandsTable::NUM_POW10 {
+    while i < Pow10SignificandsTable::NUM_POW10 && !Pow10SignificandsTable::COMPRESS {
         if Pow10SignificandsTable::SPLIT_TABLES {
             data[Pow10SignificandsTable::NUM_POW10 - i - 1] = current.w2;
             data[Pow10SignificandsTable::NUM_POW10 * 2 - i - 1] = current.w1;
@@ -955,13 +1047,11 @@ where
             break;
         }
 
-        let round_up = upper >= ten;
         let shorter = (integral.into() - digit) as i64;
         let longer = (integral.into() + u64::from(cmp >= 0)) as i64;
-        let dec_sig =
-            hint::select_unpredictable(scaled_sig_mod10 < scaled_half_ulp, shorter, longer);
+        let dec_sig = select_if_less(scaled_sig_mod10, scaled_half_ulp, shorter, longer);
         return ToDecimalResult {
-            sig: hint::select_unpredictable(round_up, shorter + 10, dec_sig),
+            sig: select_if_less(ten, upper, shorter + 10, dec_sig),
             exp: dec_exp,
         };
     }
