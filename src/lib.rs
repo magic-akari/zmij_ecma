@@ -1,4 +1,4 @@
-//! [![github]](https://github.com/dtolnay/zmij)&ensp;[![crates-io]](https://crates.io/crates/zmij)&ensp;[![docs-rs]](https://docs.rs/zmij)
+//! [![github]](https://github.com/magic-akari/zmij_ecma)&ensp;[![crates-io]](https://crates.io/crates/zmij_ecma)&ensp;[![docs-rs]](https://docs.rs/zmij_ecma)
 //!
 //! [github]: https://img.shields.io/badge/github-8da0cb?style=for-the-badge&labelColor=555555&logo=github
 //! [crates-io]: https://img.shields.io/badge/crates.io-fc8d62?style=for-the-badge&labelColor=555555&logo=rust
@@ -33,7 +33,7 @@
 //! The [dtoa-benchmark] compares this library and other Rust floating point
 //! formatting implementations across a range of precisions. The vertical axis
 //! in this chart shows nanoseconds taken by a single execution of
-//! `zmij::Buffer::new().format_finite(value)` so a lower result indicates a
+//! `zmij_ecma::Buffer::new().format_finite(value)` so a lower result indicates a
 //! faster library.
 //!
 //! [dtoa-benchmark]: https://github.com/dtolnay/dtoa-benchmark
@@ -41,7 +41,7 @@
 //! ![performance](https://raw.githubusercontent.com/dtolnay/zmij/master/dtoa-benchmark.png)
 
 #![no_std]
-#![doc(html_root_url = "https://docs.rs/zmij/1.0.22")]
+#![doc(html_root_url = "https://docs.rs/zmij_ecma/1.0.22")]
 #![deny(unsafe_op_in_unsafe_fn)]
 #![allow(non_camel_case_types, non_snake_case)]
 #![allow(
@@ -124,6 +124,7 @@ use core::arch::aarch64::{
 #[cfg(all(any(target_arch = "aarch64", target_arch = "x86_64"), not(miri)))]
 use core::arch::asm;
 use core::mem::{self, MaybeUninit};
+#[cfg(feature = "original_zmij")]
 use core::ops::RangeInclusive;
 use core::ptr;
 use core::slice;
@@ -227,6 +228,7 @@ const fn compute_dec_exp(bin_exp: i32, regular: bool) -> i32 {
 
 trait FloatTraits: traits::Float {
     // Note: Rust port uses wider fixed-notation ranges than upstream.
+    #[cfg(feature = "original_zmij")]
     const FIXED_DEC_EXP: RangeInclusive<i32>;
 
     const NUM_BITS: i32;
@@ -279,6 +281,7 @@ trait FloatTraits: traits::Float {
 
 impl FloatTraits for f32 {
     // Upstream uses -4..=6.
+    #[cfg(feature = "original_zmij")]
     const FIXED_DEC_EXP: RangeInclusive<i32> = -6..=12;
 
     const NUM_BITS: i32 = 32;
@@ -329,6 +332,7 @@ impl FloatTraits for f32 {
 
 impl FloatTraits for f64 {
     // Upstream uses -4..=15.
+    #[cfg(feature = "original_zmij")]
     const FIXED_DEC_EXP: RangeInclusive<i32> = -5..=15;
 
     const NUM_BITS: i32 = 64;
@@ -1788,7 +1792,7 @@ impl Buffer {
 /// [`zmij_ecma::Buffer`][Buffer].
 ///
 /// This trait is sealed and cannot be implemented for types outside of the
-/// `zmij` crate.
+/// `zmij_ecma` crate.
 #[allow(unknown_lints)] // rustc older than 1.74
 #[allow(private_bounds)]
 pub trait Float: private::Sealed {}
