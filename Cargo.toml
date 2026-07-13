@@ -1,20 +1,19 @@
 [package]
-name    = "zmij_ecma"
-version = "1.0.21"
-
-authors = [
-	"David Tolnay <dtolnay@gmail.com>",
-	"magic-akari <akari.ccino@gmail.com>",
-]
+name = "zmij"
+version = "1.0.22"
+authors = ["David Tolnay <dtolnay@gmail.com>"]
 categories = ["value-formatting", "no-std", "no-std::no-alloc"]
-description = "A double-to-string conversion algorithm based on Schubfach and yy"
-documentation = "https://docs.rs/zmij_ecma"
+description = "A double-to-string conversion algorithm based on Schubfach and xjb"
+documentation = "https://docs.rs/zmij"
 edition = "2021"
 exclude = ["*.png"]
 keywords = ["float"]
 license = "MIT"
 repository = "https://github.com/magic-akari/zmij_ecma"
 rust-version = "1.71"
+
+[lib]
+name = "zmij_ecma"
 
 [features]
 default       = ["ecma"]
@@ -25,9 +24,9 @@ original_zmij = []
 no-panic = { version = "0.1.36", optional = true }
 
 [dev-dependencies]
-num-bigint  = "0.4"
+num-bigint = "0.5"
+num_cpus = "1.8"
 num-integer = "0.1"
-num_cpus    = "1.8"
 opt-level   = "1"
 rand        = "0.10"
 ryu         = "1"
