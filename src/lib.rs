@@ -78,7 +78,7 @@ mod traits;
 #[cfg(feature = "ecma")]
 mod write_ecma;
 #[cfg(feature = "ecma")]
-use write_ecma::write_ecma as write;
+use write_ecma::{write_ecma as write, BUFFER_SIZE, INFINITY, NEG_INFINITY};
 
 #[cfg(all(feature = "ecma", feature = "original_zmij"))]
 mod feature_check {
@@ -90,7 +90,6 @@ use core::arch::asm;
 #[cfg(not(zmij_no_select_unpredictable))]
 use core::hint;
 use core::mem::{self, MaybeUninit};
-#[allow(unused_imports)]
 use core::ptr;
 use core::slice;
 use core::str;
@@ -104,13 +103,6 @@ const NAN: &str = "NaN";
 const INFINITY: &str = "inf";
 #[cfg(feature = "original_zmij")]
 const NEG_INFINITY: &str = "-inf";
-
-#[cfg(feature = "ecma")]
-const BUFFER_SIZE: usize = 25;
-#[cfg(feature = "ecma")]
-const INFINITY: &str = "Infinity";
-#[cfg(feature = "ecma")]
-const NEG_INFINITY: &str = "-Infinity";
 
 // Returns true_value if lhs < rhs, else false_value, without branching.
 #[inline]

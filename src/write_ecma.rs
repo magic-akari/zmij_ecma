@@ -1,5 +1,22 @@
-use crate::*;
-use core::ptr;
+//! ECMA formatting variant of `crate::write`.
+//!
+//! The conversion pipeline mirrors `crate::write` from zmij@6531ba31. Sections
+//! marked as ECMA policy intentionally differ from the core formatter.
+
+use crate::{
+    digits2, ptr, to_decimal_fast, to_decimal_schubfach, umul128_hi64, write_significand,
+    FloatTraits, DIV100_EXP, DIV100_SIG, USE_UMUL128_HI64,
+};
+use core::ops::RangeInclusive;
+
+#[cfg(feature = "no-panic")]
+use no_panic::no_panic;
+
+pub(crate) const BUFFER_SIZE: usize = 25;
+pub(crate) const INFINITY: &str = "Infinity";
+pub(crate) const NEG_INFINITY: &str = "-Infinity";
+
+const FIXED_DEC_EXP: RangeInclusive<i32> = -6..=20;
 
 /// Writes the shortest correctly rounded decimal representation of `value` to
 /// `buffer` following ECMA-262 Number::toString specification.
@@ -12,15 +29,15 @@ where
     // It is beneficial to extract exponent and significand early.
     let bin_exp = Float::get_exp(bits); // binary exponent
     let bin_sig = Float::get_sig(bits); // binary significand
+
+    // ECMA policy: -0 and +0 both return "0".
     if bin_exp == 0 && bin_sig == Float::SigType::from(0) {
-        // ECMA-262: -0 and +0 both return "0"
         return unsafe {
             *buffer = b'0';
             buffer.add(1)
         };
     }
 
-    // Handle negative sign (but not for -0, which is already handled above)
     unsafe {
         *buffer = b'-';
     }
@@ -58,30 +75,27 @@ where
 
     let length = unsafe { end.offset_from(buffer.add(1)) } as usize;
 
-    // ECMA-262 uses n (decimal_point) in range [-5, 21] for non-exponential notation.
+    // ECMA policy: use fixed notation when the decimal point is in [-5, 21].
     // In zmij, dec_exp represents (decimal_point - 1), so we check [-6, 20].
-    if (-6..=20).contains(&dec_exp) {
+    if FIXED_DEC_EXP.contains(&dec_exp) {
         if length as i32 - 1 <= dec_exp {
-            // ECMA-262 step 6: n >= k, output integer format (no .0 suffix)
-            // Example: 1234e7 -> "12340000000"
+            // ECMA policy: integer output does not receive a ".0" suffix.
+            // 1234e7 -> "12340000000"
             return unsafe {
                 ptr::copy(buffer.add(1), buffer, length);
-                // Add padding zeros if needed
                 let padding = dec_exp as usize + 1 - length;
                 ptr::write_bytes(buffer.add(length), b'0', padding);
                 buffer.add(dec_exp as usize + 1)
             };
         } else if 0 <= dec_exp {
-            // ECMA-262 step 7: 0 < n < k, output decimal format
-            // Example: 1234e-2 -> "12.34"
+            // 1234e-2 -> "12.34"
             return unsafe {
                 ptr::copy(buffer.add(1), buffer, dec_exp as usize + 1);
                 *buffer.add(dec_exp as usize + 1) = b'.';
                 buffer.add(length + 1)
             };
         } else {
-            // ECMA-262 step 8: -5 <= n <= 0, output "0.00...0xxx" format
-            // Example: 1234e-6 -> "0.001234"
+            // 1234e-6 -> "0.001234"
             return unsafe {
                 ptr::copy(buffer.add(1), buffer.add((1 - dec_exp) as usize), length);
                 ptr::write_bytes(buffer, b'0', (1 - dec_exp) as usize);
@@ -91,10 +105,8 @@ where
         }
     }
 
-    // ECMA-262 steps 9-10: scientific notation
-
-    // 1234e30 -> 1.234e+33
     unsafe {
+        // 1234e30 -> "1.234e+33"
         *buffer = *buffer.add(1);
         *buffer.add(1) = b'.';
     }
