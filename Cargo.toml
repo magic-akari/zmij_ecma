@@ -1,6 +1,6 @@
 [package]
 name    = "zmij_ecma"
-version = "1.0.22"
+version = "1.0.23"
 
 authors = [
 	"David Tolnay <dtolnay@gmail.com>",
